@@ -1,0 +1,21 @@
+# Example: Logista Madrid warehouse
+client_name: "Logista Madrid"
+
+active_flows:
+  - outbound
+  - inbound
+
+productivity_inbound: 85.0
+productivity_outbound: 120.0
+
+hours_per_shift: 8
+overhead_buffer: 0.15
+
+backlog_threshold_watch: 1.0
+backlog_threshold_critical: 2.0
+
+initial_backlog_outbound: 3500
+initial_backlog_inbound: 1200
+
+language: "es"
+forecast_horizon: 28

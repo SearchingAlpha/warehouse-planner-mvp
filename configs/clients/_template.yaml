@@ -1,0 +1,29 @@
+# HireRobots Client Configuration Template
+# Copy this file and fill in the values for each client.
+
+client_name: "Client Name"
+
+# Which flows to forecast: ["outbound"], ["inbound"], or ["outbound", "inbound"]
+active_flows:
+  - outbound
+  - inbound
+
+# Productivity rates (units processed per hour per worker)
+productivity_inbound: 85.0
+productivity_outbound: 120.0
+
+# Shift configuration
+hours_per_shift: 8          # Standard shift length in hours
+overhead_buffer: 0.15       # 15% overhead buffer for headcount (0.0 - 1.0)
+
+# Backlog alert thresholds (in days of backlog)
+backlog_threshold_watch: 1.0
+backlog_threshold_critical: 2.0
+
+# Initial backlog at start of service (units)
+initial_backlog_outbound: 0
+initial_backlog_inbound: 0
+
+# Report configuration
+language: "es"              # "es" for Spanish, "en" for English
+forecast_horizon: 28        # Days to forecast (default: 28)

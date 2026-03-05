@@ -127,7 +127,7 @@ For the MVP, the client chooses which flows to activate. Outbound is expected to
 |---|---|
 |**Horizon**|28 days (4 weeks)|
 |**Granularity**|Daily|
-|**Models**|Hybrid: Chronos-2 (foundation model, zero-shot) + Prophet (classical baseline). System selects best or blends.|
+|**Models**|LightGBM with quantile regression (P10/P50/P90). Uses lag features, rolling statistics, and calendar features. Trains on client's historical data in seconds.|
 |**Outputs per day**|Point forecast (median), Lower bound (P10), Upper bound (P90)|
 |**Flows**|Inbound and outbound forecasted independently|
 |**Target accuracy**|WAPE < 10% (measured on rolling 4-week basis)|
@@ -276,8 +276,7 @@ Client (CSV/Excel) → Data Pipeline → Forecast Engine → Backlog & Labor Cal
 |Component|Technology|Notes|
 |---|---|---|
 |**Language**|Python 3.10+|Tested on 3.12|
-|**Foundation model**|Amazon Chronos-2 (HuggingFace)|Zero-shot, 46M params (small)|
-|**Classical model**|Meta Prophet|Interpretable baseline|
+|**Forecasting model**|LightGBM (quantile regression)|Industry-standard gradient boosting. Trains on lag features, rolling stats, calendar features. P10/P50/P90 via quantile regression.|
 |**Data processing**|pandas, numpy|Standard data stack|
 |**Excel generation**|openpyxl|Conditional formatting, charts|
 |**Configuration**|YAML per client|Easy to modify|
@@ -289,8 +288,7 @@ Client (CSV/Excel) → Data Pipeline → Forecast Engine → Backlog & Labor Cal
 |Component|Status|Notes|
 |---|---|---|
 |Data ingestion (load, clean, validate)|✅ Built|Auto-detect, clean, validate pipeline|
-|Chronos-2 forecasting|✅ Built|28-day forecast with confidence intervals|
-|Prophet forecasting|✅ Built|Classical baseline|
+|LightGBM forecasting|✅ Built|28-day quantile regression forecast with P10/P50/P90 confidence intervals|
 |Evaluation metrics (WAPE, MAPE, etc.)|✅ Built|4 metrics implemented|
 |Basic labor calculator|✅ Built|Volume → hours → headcount|
 |AI agent (internal tool)|✅ Built|GPT-4o with sandboxed code execution|
