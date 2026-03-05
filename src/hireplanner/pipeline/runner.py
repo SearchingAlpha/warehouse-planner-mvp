@@ -35,11 +35,11 @@ def run_pipeline(
         8. Compare previous forecast vs new actuals (accuracy)
         9. Append accuracy log
        10. Save current forecast
-       11. Generate Excel report
+       11. Generate Markdown + PNG report
        12. Print summary
 
     Returns:
-        Path to the generated Excel report.
+        Path to the generated report.md.
     """
     from hireplanner.config.client_config import load_client_config
     from hireplanner.ingestion.loader import load_data
@@ -146,15 +146,14 @@ def run_pipeline(
     save_forecast(config.client_name, forecast_df, run_date, log_dir)
     _log("  Current forecast saved.")
 
-    # Step 11: Generate Excel report
-    _log("Generating Excel report...")
-    from hireplanner.reporting.excel_generator import generate_excel_report
+    # Step 11: Generate Markdown + PNG report
+    _log("Generating Markdown report...")
+    from hireplanner.reporting.markdown_generator import generate_markdown_report
 
     safe_name = config.client_name.lower().replace(" ", "_")
-    output_filename = f"{safe_name}_{run_date.isoformat()}.xlsx"
-    output_path = str(Path(output_dir) / output_filename)
+    report_output_dir = Path(output_dir) / f"{safe_name}_{run_date.isoformat()}"
 
-    report_path = generate_excel_report(
+    report_path = generate_markdown_report(
         config=config,
         forecast_df=forecast_df,
         backlog_dfs=backlog_dfs,
@@ -162,7 +161,7 @@ def run_pipeline(
         accuracy_data=accuracy_data,
         alert_summary=alert_summary,
         alert_series_dict=alert_series_dict,
-        output_path=output_path,
+        output_dir=report_output_dir,
         locales_dir=locales_dir,
     )
 
@@ -301,7 +300,7 @@ def main():
     parser.add_argument(
         "--output",
         default="output",
-        help="Output directory for Excel report (default: output/)",
+        help="Output directory for Markdown report (default: output/)",
     )
     parser.add_argument(
         "--log-dir",

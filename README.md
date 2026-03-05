@@ -1,6 +1,6 @@
 # HireRobots - Warehouse Forecasting & Labor Planning
 
-Weekly forecasting and labor planning service for 3PL warehouses. Generates 28-day volume forecasts with confidence intervals, backlog projections, headcount recommendations, and accuracy tracking — all delivered as a formatted Excel report.
+Weekly forecasting and labor planning service for 3PL warehouses. Generates 28-day volume forecasts with confidence intervals, dual-track backlog projections (recommended vs. actual staffing), headcount recommendations with target backlog optimization, and accuracy tracking — all delivered as a Markdown report with PNG charts.
 
 ## Table of Contents
 
@@ -15,7 +15,7 @@ Weekly forecasting and labor planning service for 3PL warehouses. Generates 28-d
 - [Backlog Model](#backlog-model)
 - [Alert System](#alert-system)
 - [Headcount Planning](#headcount-planning)
-- [Excel Report Structure](#excel-report-structure)
+- [Report Structure](#report-structure)
 - [Accuracy Tracking](#accuracy-tracking)
 - [Localization](#localization)
 - [Testing](#testing)
@@ -29,7 +29,7 @@ HireRobots replaces gut-feel labor planning with data-driven weekly forecasts. T
 
 1. Client sends updated volume data (CSV/Excel) weekly
 2. Founder runs the pipeline with one command
-3. Pipeline generates a 5-tab Excel report with forecasts, backlog projections, headcount plans, and accuracy metrics
+3. Pipeline generates a Markdown report with PNG charts covering forecasts, dual-track backlog projections, headcount plans, and accuracy metrics
 4. Founder reviews and emails the report to the client
 
 Target accuracy: **< 10% WAPE** (vs. 20-30% industry average with manual methods).
@@ -51,7 +51,7 @@ pip install -e ".[dev]"
 - `pandas` >= 2.0
 - `numpy` >= 1.24
 - `lightgbm` >= 4.0
-- `openpyxl` >= 3.1
+- `matplotlib` >= 3.7
 - `pyyaml` >= 6.0
 
 **Dev dependencies:** `pytest`, `pytest-cov`, `ruff`
@@ -86,7 +86,7 @@ Column names are auto-detected (see [Data Format Requirements](#data-format-requ
 hireplanner --config configs/clients/my_client.yaml --data data/my_client_volumes.csv
 ```
 
-This generates an Excel report in the `output/` directory.
+This generates a Markdown report with PNG charts in the `output/` directory.
 
 ### 4. Validate data without generating a forecast
 
@@ -104,12 +104,12 @@ hireplanner --config <path> --data <path> [OPTIONS]
 |------|---------|-------------|
 | `--config` | *(required)* | Path to client YAML config file |
 | `--data` | *(required)* | Path to volume data CSV/Excel file |
-| `--output` | `output/` | Output directory for the Excel report |
+| `--output` | `output/` | Output directory for the Markdown report |
 | `--log-dir` | `data/accuracy_logs/` | Directory for accuracy logs |
 | `--locales-dir` | `configs/locales/` | Directory for locale YAML files |
 | `--dry-run` | `false` | Validate data and config only, skip forecast |
 
-**Output:** An Excel file named `{client_name}_{date}.xlsx` in the output directory.
+**Output:** A directory `{client_name}_{date}/` containing `report.md` + `figures/*.png`.
 
 ## Client Configuration
 
@@ -134,6 +134,10 @@ backlog_threshold_critical: 2.0 # days of backlog -> Critical status
 initial_backlog_outbound: 3500  # units at service start
 initial_backlog_inbound: 1200   # units at service start
 
+target_backlog_ratio: 0.35      # target backlog as ratio (0.0–1.0)
+current_staffing_outbound: 12   # current headcount for outbound
+current_staffing_inbound: 5     # current headcount for inbound
+
 language: "es"          # Report language: "en" or "es"
 forecast_horizon: 28    # Days to forecast
 ```
@@ -152,6 +156,9 @@ forecast_horizon: 28    # Days to forecast
 | `backlog_threshold_critical` | float | Days of backlog that triggers Critical alert |
 | `initial_backlog_outbound` | int | Starting backlog at onboarding (outbound units) |
 | `initial_backlog_inbound` | int | Starting backlog at onboarding (inbound units) |
+| `target_backlog_ratio` | float | Target backlog level as ratio of critical threshold × mean demand (0.0–1.0, default: 0.35) |
+| `current_staffing_outbound` | int | Current headcount for outbound (0 = omit actual track) |
+| `current_staffing_inbound` | int | Current headcount for inbound (0 = omit actual track) |
 | `language` | string | Report language: `"en"` or `"es"` |
 | `forecast_horizon` | int | Number of days to forecast (default: 28) |
 
@@ -201,7 +208,7 @@ The pipeline runs 12 steps sequentially:
 │  8. Compare previous forecast vs new actuals             │
 │  9. Append accuracy log                                  │
 │ 10. Save current forecast for next week's comparison     │
-│ 11. Generate 5-tab Excel report                          │
+│ 11. Generate Markdown + PNG report                        │
 │ 12. Print summary                                        │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -288,61 +295,87 @@ Thresholds are configurable per client based on their SLA commitments.
 
 ## Headcount Planning
 
-### Formula
+### Target Backlog Capacity Formula
+
+Instead of staffing to clear all backlog (which leads to zero backlog and idle workers), the system recommends capacity that maintains a healthy backlog buffer:
 
 ```
-headcount = ceil(volume / (productivity × hours_per_shift) × (1 + overhead_buffer))
+reference_daily_capacity = mean(forecast_demand) over horizon
+target_backlog_units = target_backlog_ratio × backlog_threshold_critical × reference_daily_capacity
+recommended_capacity = max(0, beg_backlog + demand - target_backlog_units)
+recommended_hc = ceil(recommended_capacity / (productivity × hours_per_shift))
 ```
 
-- Always rounds up to whole workers
-- Separate headcount for inbound and outbound flows
-- Overhead buffer defaults to 15% (configurable)
+This is non-circular (target computed once from mean demand) and drives backlog toward a sustainable target level.
+
+### Dual Capacity Tracks
+
+When `current_staffing_outbound` / `current_staffing_inbound` are provided (> 0), the report shows two parallel tracks:
+
+- **Recommended**: uses target-backlog headcount from the formula above
+- **Actual**: uses fixed current staffing × productivity × hours (constant daily capacity)
+
+Both tracks appear in backlog tables, headcount plan, and charts. When current staffing is 0, the actual track is omitted.
 
 ### Output
 
 The headcount plan provides per day:
-- Recommended headcount (inbound)
-- Recommended headcount (outbound)
-- Total headcount
+- Recommended headcount (inbound + outbound + total)
+- Actual headcount (inbound + outbound + total, if current staffing provided)
 
-## Excel Report Structure
+## Report Structure
 
-The output is a 5-tab Excel workbook with formatting and charts.
+The output is a Markdown report (`report.md`) with embedded PNG chart references, organized in a directory:
 
-### Tab 1 — Executive Summary
+```
+output/{client}_{date}/
+├── report.md
+└── figures/
+    ├── forecast_outbound.png
+    ├── forecast_inbound.png
+    ├── backlog_outbound.png
+    ├── backlog_inbound.png
+    ├── headcount.png
+    └── accuracy.png
+```
+
+### Section 1 — Executive Summary
 
 Key metrics at a glance:
 - Forecast accuracy (last week's WAPE)
-- Average days of backlog
+- Peak days of backlog
 - Peak headcount needed
 - Alert summary (critical/watch/healthy day counts)
 - Accuracy trend (improving / stable / degrading)
 
-### Tab 2 — Daily Forecast (28 days)
+### Section 2 — Daily Forecast (28 days)
 
 Per active flow:
 - Date, Day of Week
 - Forecast Volume: P50 (point estimate), P10 (lower bound), P90 (upper bound)
-- Includes an area chart showing forecast with confidence intervals
+- Line chart with P10-P90 fill-between band
 
-### Tab 3 — Backlog Projection
+### Section 3 — Backlog Projection
 
 Per active flow:
-- Date, Beg Workable Backlog, New Demand, Capacity, End Workable Backlog
-- Days of End Workable Backlog
-- Alert status column with conditional formatting (green/yellow/red)
+- Date, Beg Backlog, New Demand
+- Capacity (Recommended) + End Backlog (Recommended) + Days of Backlog (Recommended)
+- Capacity (Actual) + End Backlog (Actual) + Days of Backlog (Actual) — shown when current staffing > 0
+- Alert status indicators: `[OK]` / `[!!]` / `[CRITICAL]`
+- Dual-area chart with target backlog line
 
-### Tab 4 — Headcount Plan
+### Section 4 — Headcount Plan
 
-- Date, Headcount Outbound, Headcount Inbound, Total Headcount
-- Includes a bar chart of daily headcount
+- Date, HC per flow (Recommended + Actual), Total HC (Recommended + Actual)
+- Weekly summary (average daily HC, total hours)
+- Grouped bar chart
 
-### Tab 5 — Accuracy Report
+### Section 5 — Accuracy Report
 
 - Forecast vs Actual comparison for the last measured period
 - WAPE, MAPE, MAE metrics
 - Accuracy trend (last 4 weeks if available)
-- Chart: forecast vs actual overlay
+- Overlay line chart: forecast vs actual
 
 ## Accuracy Tracking
 
@@ -410,7 +443,7 @@ Skip slow tests (model training):
 pytest -m "not slow"
 ```
 
-The suite contains **161 tests** covering:
+The suite contains **186 tests** covering:
 
 | Module | Coverage |
 |--------|----------|
@@ -419,7 +452,7 @@ The suite contains **161 tests** covering:
 | `forecasting/` | LightGBM features, forecasts, ensemble logic |
 | `planning/` | Backlog calculation, alerts, labor/headcount |
 | `metrics/` | WAPE, MAPE, MAE, RMSE, accuracy tracking |
-| `reporting/` | Excel generation, formatters, charts |
+| `reporting/` | Markdown generation, matplotlib charts |
 | `pipeline/` | End-to-end pipeline runner |
 
 ## Project Structure
@@ -452,12 +485,11 @@ warehouse-planner-mvp/
 │       │   ├── evaluation.py         # WAPE, MAPE, MAE, RMSE
 │       │   └── accuracy_tracker.py   # Forecast vs actual tracking + logging
 │       ├── reporting/
-│       │   ├── excel_generator.py    # 5-tab Excel report builder
-│       │   ├── formatters.py         # openpyxl styles (headers, alerts, colors)
-│       │   └── charts.py            # Line/Area/Bar chart builders
+│       │   ├── markdown_generator.py # 5-section Markdown + PNG report builder
+│       │   └── matplotlib_charts.py  # Matplotlib chart generators (forecast, backlog, HC, accuracy)
 │       └── pipeline/
 │           └── runner.py             # Main orchestrator + CLI entry point
-├── tests/                            # 161 unit tests (pytest)
+├── tests/                            # 186 unit tests (pytest)
 ├── pyproject.toml                    # Project metadata and dependencies
 ├── prd.md                            # Product Requirements Document
 └── PLAN.md                           # Implementation plan

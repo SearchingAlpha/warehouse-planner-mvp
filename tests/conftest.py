@@ -24,6 +24,9 @@ def sample_config():
         backlog_threshold_critical=2.0,
         initial_backlog_outbound=3500,
         initial_backlog_inbound=1200,
+        target_backlog_ratio=0.35,
+        current_staffing_outbound=0,
+        current_staffing_inbound=0,
         language="en",
         forecast_horizon=28,
     )
@@ -45,6 +48,9 @@ def sample_outbound_only_config():
         backlog_threshold_critical=2.0,
         initial_backlog_outbound=2000,
         initial_backlog_inbound=0,
+        target_backlog_ratio=0.35,
+        current_staffing_outbound=0,
+        current_staffing_inbound=0,
         language="en",
         forecast_horizon=28,
     )

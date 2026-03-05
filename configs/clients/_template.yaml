@@ -24,6 +24,13 @@ backlog_threshold_critical: 2.0
 initial_backlog_outbound: 0
 initial_backlog_inbound: 0
 
+# Target backlog ratio (0.0 = clear all backlog, 1.0 = max buffer)
+target_backlog_ratio: 0.35
+
+# Current staffing levels (0 = omit actual capacity track from report)
+current_staffing_outbound: 0
+current_staffing_inbound: 0
+
 # Report configuration
 language: "es"              # "es" for Spanish, "en" for English
 forecast_horizon: 28        # Days to forecast (default: 28)

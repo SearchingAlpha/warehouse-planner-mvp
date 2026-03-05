@@ -22,6 +22,9 @@ def _make_config_file(tmp_path):
         "backlog_threshold_critical": 2.0,
         "initial_backlog_outbound": 1000,
         "initial_backlog_inbound": 0,
+        "target_backlog_ratio": 0.35,
+        "current_staffing_outbound": 0,
+        "current_staffing_inbound": 0,
         "language": "en",
         "forecast_horizon": 7,  # Short horizon for fast tests
     }
@@ -68,12 +71,21 @@ def _make_locale_files(tmp_path):
             "beg_backlog": "Beg Backlog",
             "new_demand": "New Demand",
             "capacity": "Capacity",
+            "capacity_recommended": "Capacity (Rec)",
+            "capacity_actual": "Capacity (Actual)",
             "end_backlog": "End Backlog",
+            "end_backlog_recommended": "End Backlog (Rec)",
+            "end_backlog_actual": "End Backlog (Actual)",
             "days_of_backlog": "Days of Backlog",
+            "days_of_backlog_recommended": "Days Backlog (Rec)",
+            "days_of_backlog_actual": "Days Backlog (Actual)",
             "alert_status": "Status",
             "hc_inbound": "HC Inbound",
             "hc_outbound": "HC Outbound",
             "hc_total": "HC Total",
+            "hc_recommended": "(Rec)",
+            "hc_actual": "(Actual)",
+            "target_backlog": "Target Backlog",
             "forecast_col": "Forecast",
             "actual": "Actual",
             "error": "Abs Error",
@@ -117,8 +129,8 @@ def _make_locale_files(tmp_path):
 class TestRunPipeline:
     """Integration tests for run_pipeline with LightGBM forecasting."""
 
-    def test_full_pipeline_produces_excel(self, tmp_path):
-        """Test that the full pipeline produces an Excel file."""
+    def test_full_pipeline_produces_markdown(self, tmp_path):
+        """Test that the full pipeline produces a report.md file."""
         config_path = _make_config_file(tmp_path)
         data_path = _make_data_file(tmp_path)
         locales_dir = _make_locale_files(tmp_path)
@@ -135,8 +147,14 @@ class TestRunPipeline:
             locales_dir=locales_dir,
         )
 
-        assert result.endswith(".xlsx")
+        assert result.endswith("report.md")
         assert Path(result).exists()
+
+        # Verify figures directory exists with PNGs
+        figures_dir = Path(result).parent / "figures"
+        assert figures_dir.exists()
+        pngs = list(figures_dir.glob("*.png"))
+        assert len(pngs) > 0
 
     def test_dry_run_does_not_produce_file(self, tmp_path):
         """Test that dry_run validates but doesn't generate report."""
@@ -215,7 +233,7 @@ class TestRunPipeline:
                 locales_dir=locales_dir,
             )
 
-        assert result.endswith(".xlsx")
+        assert result.endswith("report.md")
         assert Path(result).exists()
 
 

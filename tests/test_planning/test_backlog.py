@@ -11,6 +11,8 @@ from hireplanner.planning.backlog import (
     calculate_daily_capacity,
     calculate_days_of_backlog,
     calculate_flow_backlog,
+    calculate_recommended_capacity,
+    calculate_actual_capacity,
 )
 
 
@@ -73,10 +75,6 @@ class TestCalculateDailyBacklog:
         initial = 500.0
 
         df = calculate_daily_backlog(demand, capacity, initial)
-        # Day 0: end = max(0, 500-200+50) = 350
-        # Day 1: end = max(0, 350-200+50) = 200
-        # Day 2: end = max(0, 200-200+50) = 50
-        # Day 3: end = max(0, 50-200+50)  = 0
         assert df["end_backlog"].iloc[0] == pytest.approx(350.0)
         assert df["end_backlog"].iloc[1] == pytest.approx(200.0)
         assert df["end_backlog"].iloc[2] == pytest.approx(50.0)
@@ -155,6 +153,80 @@ class TestCalculateDaysOfBacklog:
 
 
 # ---------------------------------------------------------------------------
+# calculate_recommended_capacity
+# ---------------------------------------------------------------------------
+
+class TestCalculateRecommendedCapacity:
+    def test_basic_shape(self):
+        """Returns arrays of the correct length."""
+        demand = np.array([1000.0, 1200.0, 800.0, 1100.0])
+        rec_hc, rec_cap = calculate_recommended_capacity(
+            demand, initial_backlog=500.0,
+            target_backlog_ratio=0.35, backlog_threshold_critical=2.0,
+            productivity=100.0, hours_per_shift=8.0,
+        )
+        assert len(rec_hc) == 4
+        assert len(rec_cap) == 4
+
+    def test_headcount_is_non_negative_integers(self):
+        """Recommended headcount should be non-negative integers."""
+        demand = np.array([500.0] * 10)
+        rec_hc, _ = calculate_recommended_capacity(
+            demand, initial_backlog=0.0,
+            target_backlog_ratio=0.35, backlog_threshold_critical=2.0,
+            productivity=100.0, hours_per_shift=8.0,
+        )
+        assert all(h >= 0 for h in rec_hc)
+        assert all(isinstance(int(h), int) for h in rec_hc)
+
+    def test_capacity_equals_hc_times_productivity(self):
+        """Capacity should equal headcount * productivity * hours."""
+        demand = np.array([1000.0, 1200.0])
+        productivity = 100.0
+        hours = 8.0
+        rec_hc, rec_cap = calculate_recommended_capacity(
+            demand, initial_backlog=0.0,
+            target_backlog_ratio=0.35, backlog_threshold_critical=2.0,
+            productivity=productivity, hours_per_shift=hours,
+        )
+        for i in range(len(demand)):
+            assert rec_cap[i] == pytest.approx(rec_hc[i] * productivity * hours)
+
+    def test_zero_ratio_clears_backlog(self):
+        """With target_backlog_ratio=0, should clear all backlog."""
+        demand = np.array([1000.0] * 5)
+        rec_hc, rec_cap = calculate_recommended_capacity(
+            demand, initial_backlog=5000.0,
+            target_backlog_ratio=0.0, backlog_threshold_critical=2.0,
+            productivity=100.0, hours_per_shift=8.0,
+        )
+        # With 0 target, it should staff to clear everything
+        assert all(h >= 0 for h in rec_hc)
+        # Simulate the backlog - should reach 0
+        beg = 5000.0
+        for i in range(5):
+            beg = max(0, beg + demand[i] - rec_cap[i])
+        assert beg == pytest.approx(0.0, abs=1.0)
+
+
+# ---------------------------------------------------------------------------
+# calculate_actual_capacity
+# ---------------------------------------------------------------------------
+
+class TestCalculateActualCapacity:
+    def test_constant_capacity(self):
+        """Actual capacity is constant across all days."""
+        cap = calculate_actual_capacity(5, current_staffing=10, productivity=100.0, hours_per_shift=8.0)
+        assert len(cap) == 5
+        np.testing.assert_array_equal(cap, [8000.0] * 5)
+
+    def test_zero_staffing(self):
+        """Zero staffing produces zero capacity."""
+        cap = calculate_actual_capacity(3, current_staffing=0, productivity=100.0, hours_per_shift=8.0)
+        np.testing.assert_array_equal(cap, [0.0, 0.0, 0.0])
+
+
+# ---------------------------------------------------------------------------
 # calculate_flow_backlog (integration with labor module)
 # ---------------------------------------------------------------------------
 
@@ -162,14 +234,39 @@ class TestCalculateFlowBacklog:
     def test_produces_correct_columns(self, sample_config, sample_forecast_df):
         """Flow backlog DataFrame has all expected columns."""
         df = calculate_flow_backlog(sample_config, sample_forecast_df, "outbound")
-        expected_cols = ["date", "beg_backlog", "new_demand", "capacity", "end_backlog", "days_of_backlog"]
+        expected_cols = [
+            "date", "beg_backlog", "new_demand",
+            "capacity_recommended", "capacity_actual",
+            "end_backlog_recommended", "end_backlog_actual",
+            "days_of_backlog_recommended", "days_of_backlog_actual",
+            "capacity", "end_backlog", "days_of_backlog",
+        ]
         assert list(df.columns) == expected_cols
+
+    def test_backward_compat_aliases(self, sample_config, sample_forecast_df):
+        """Backward-compat aliases point to recommended track."""
+        df = calculate_flow_backlog(sample_config, sample_forecast_df, "outbound")
+        pd.testing.assert_series_equal(
+            df["capacity"], df["capacity_recommended"], check_names=False,
+        )
+        pd.testing.assert_series_equal(
+            df["end_backlog"], df["end_backlog_recommended"], check_names=False,
+        )
+        pd.testing.assert_series_equal(
+            df["days_of_backlog"], df["days_of_backlog_recommended"], check_names=False,
+        )
 
     def test_length_matches_forecast(self, sample_config, sample_forecast_df):
         """Output length matches number of forecast days for the flow."""
         df = calculate_flow_backlog(sample_config, sample_forecast_df, "outbound")
         n_outbound = len(sample_forecast_df[sample_forecast_df["flow"] == "outbound"])
         assert len(df) == n_outbound
+
+    def test_actual_track_zero_staffing(self, sample_config, sample_forecast_df):
+        """With zero current_staffing, actual capacity is zero."""
+        assert sample_config.current_staffing_outbound == 0
+        df = calculate_flow_backlog(sample_config, sample_forecast_df, "outbound")
+        assert (df["capacity_actual"] == 0).all()
 
 
 # ---------------------------------------------------------------------------

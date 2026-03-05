@@ -43,6 +43,9 @@ class TestLoadValidConfig:
         assert config.backlog_threshold_critical == 2.0
         assert config.initial_backlog_outbound == 0
         assert config.initial_backlog_inbound == 0
+        assert config.target_backlog_ratio == 0.35
+        assert config.current_staffing_outbound == 0
+        assert config.current_staffing_inbound == 0
         assert config.language == "en"
         assert config.forecast_horizon == 28
 
@@ -188,6 +191,47 @@ class TestInitialBacklog:
         path = _write_yaml(tmp_path, data)
 
         with pytest.raises(ConfigError, match="initial_backlog_inbound must be non-negative"):
+            load_client_config(path)
+
+
+class TestTargetBacklogRatio:
+    def test_valid_ratio(self, tmp_path):
+        data = _valid_data(target_backlog_ratio=0.5)
+        path = _write_yaml(tmp_path, data)
+        config = load_client_config(path)
+        assert config.target_backlog_ratio == 0.5
+
+    def test_ratio_above_one(self, tmp_path):
+        data = _valid_data(target_backlog_ratio=1.5)
+        path = _write_yaml(tmp_path, data)
+        with pytest.raises(ConfigError, match="target_backlog_ratio must be between 0 and 1"):
+            load_client_config(path)
+
+    def test_ratio_negative(self, tmp_path):
+        data = _valid_data(target_backlog_ratio=-0.1)
+        path = _write_yaml(tmp_path, data)
+        with pytest.raises(ConfigError, match="target_backlog_ratio must be between 0 and 1"):
+            load_client_config(path)
+
+
+class TestCurrentStaffing:
+    def test_valid_staffing(self, tmp_path):
+        data = _valid_data(current_staffing_outbound=10, current_staffing_inbound=5)
+        path = _write_yaml(tmp_path, data)
+        config = load_client_config(path)
+        assert config.current_staffing_outbound == 10
+        assert config.current_staffing_inbound == 5
+
+    def test_negative_staffing_outbound(self, tmp_path):
+        data = _valid_data(current_staffing_outbound=-1)
+        path = _write_yaml(tmp_path, data)
+        with pytest.raises(ConfigError, match="current_staffing_outbound must be non-negative"):
+            load_client_config(path)
+
+    def test_negative_staffing_inbound(self, tmp_path):
+        data = _valid_data(current_staffing_inbound=-1)
+        path = _write_yaml(tmp_path, data)
+        with pytest.raises(ConfigError, match="current_staffing_inbound must be non-negative"):
             load_client_config(path)
 
 

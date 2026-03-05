@@ -17,6 +17,9 @@ class ClientConfig:
     backlog_threshold_critical: float = 2.0
     initial_backlog_outbound: int = 0
     initial_backlog_inbound: int = 0
+    target_backlog_ratio: float = 0.35
+    current_staffing_outbound: int = 0
+    current_staffing_inbound: int = 0
     language: str = "en"
     forecast_horizon: int = 28
 
@@ -52,6 +55,14 @@ class ClientConfig:
             raise ConfigError("initial_backlog_outbound must be non-negative")
         if self.initial_backlog_inbound < 0:
             raise ConfigError("initial_backlog_inbound must be non-negative")
+        # Target backlog ratio
+        if not 0 <= self.target_backlog_ratio <= 1:
+            raise ConfigError("target_backlog_ratio must be between 0 and 1")
+        # Current staffing
+        if self.current_staffing_outbound < 0:
+            raise ConfigError("current_staffing_outbound must be non-negative")
+        if self.current_staffing_inbound < 0:
+            raise ConfigError("current_staffing_inbound must be non-negative")
         # Language
         if self.language not in ("es", "en"):
             raise ConfigError(f"language must be 'es' or 'en', got '{self.language}'")
@@ -90,6 +101,9 @@ def load_client_config(path: str | Path) -> ClientConfig:
             backlog_threshold_critical=float(raw.get("backlog_threshold_critical", 2.0)),
             initial_backlog_outbound=int(raw.get("initial_backlog_outbound", 0)),
             initial_backlog_inbound=int(raw.get("initial_backlog_inbound", 0)),
+            target_backlog_ratio=float(raw.get("target_backlog_ratio", 0.35)),
+            current_staffing_outbound=int(raw.get("current_staffing_outbound", 0)),
+            current_staffing_inbound=int(raw.get("current_staffing_inbound", 0)),
             language=str(raw.get("language", "en")),
             forecast_horizon=int(raw.get("forecast_horizon", 28)),
         )

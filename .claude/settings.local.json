@@ -6,7 +6,11 @@
       "WebFetch(domain:github.com)",
       "Bash(do touch:*)",
       "Bash(pip install:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(rm:*)",
+      "mcp__ide__executeCode",
+      "Bash(dir:*)",
+      "Bash(printf test output\\\\n:*)"
     ]
   }
 }

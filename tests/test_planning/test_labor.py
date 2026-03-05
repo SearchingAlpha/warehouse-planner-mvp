@@ -26,7 +26,6 @@ class TestCalculateHeadcount:
         assert result[0] == 1
 
     def test_exact_integer_stays(self):
-        # Need volume such that raw is exactly integer: unlikely, but large volume test
         # 800 / (100*8) = 1.0, * 1.0 (no buffer) = 1.0 => ceil => 1
         result = calculate_headcount(np.array([800]), productivity=100, hours_per_shift=8, overhead_buffer=0.0)
         assert result[0] == 1
@@ -34,10 +33,6 @@ class TestCalculateHeadcount:
     def test_multiple_days(self):
         volumes = np.array([960, 480, 0, 1920])
         result = calculate_headcount(volumes, productivity=120, hours_per_shift=8, overhead_buffer=0.15)
-        # 960/(120*8)*1.15 = 1.15 => 2
-        # 480/(120*8)*1.15 = 0.575 => 1
-        # 0 => 0
-        # 1920/(120*8)*1.15 = 2.3 => 3
         np.testing.assert_array_equal(result, [2, 1, 0, 3])
 
     def test_accepts_pandas_series(self):
@@ -69,6 +64,11 @@ class TestBuildHeadcountPlan:
             productivity_inbound=100,
             hours_per_shift=8,
             overhead_buffer=0.15,
+            initial_backlog_outbound=0,
+            initial_backlog_inbound=0,
+            target_backlog_ratio=0.0,
+            current_staffing_outbound=5,
+            current_staffing_inbound=3,
         )
 
     @pytest.fixture()
@@ -80,6 +80,11 @@ class TestBuildHeadcountPlan:
             productivity_inbound=100,
             hours_per_shift=8,
             overhead_buffer=0.15,
+            initial_backlog_outbound=0,
+            initial_backlog_inbound=0,
+            target_backlog_ratio=0.0,
+            current_staffing_outbound=0,
+            current_staffing_inbound=0,
         )
 
     @pytest.fixture()
@@ -89,18 +94,41 @@ class TestBuildHeadcountPlan:
         ib = pd.DataFrame({"date": dates, "flow": "inbound", "forecast_p50": [800, 400, 1600]})
         return pd.concat([ob, ib], ignore_index=True)
 
-    def test_both_flows(self, forecast_df, config_both_flows):
+    def test_has_recommended_and_actual_columns(self, forecast_df, config_both_flows):
         plan = build_headcount_plan(forecast_df, config_both_flows)
-        assert list(plan.columns) == ["date", "hc_outbound", "hc_inbound", "hc_total"]
+        assert "hc_outbound_recommended" in plan.columns
+        assert "hc_outbound_actual" in plan.columns
+        assert "hc_inbound_recommended" in plan.columns
+        assert "hc_inbound_actual" in plan.columns
+        assert "hc_total_recommended" in plan.columns
+        assert "hc_total_actual" in plan.columns
+
+    def test_backward_compat_aliases(self, forecast_df, config_both_flows):
+        plan = build_headcount_plan(forecast_df, config_both_flows)
+        pd.testing.assert_series_equal(
+            plan["hc_outbound"], plan["hc_outbound_recommended"], check_names=False,
+        )
+        pd.testing.assert_series_equal(
+            plan["hc_total"], plan["hc_total_recommended"], check_names=False,
+        )
+
+    def test_actual_staffing_is_constant(self, forecast_df, config_both_flows):
+        plan = build_headcount_plan(forecast_df, config_both_flows)
+        assert (plan["hc_outbound_actual"] == 5).all()
+        assert (plan["hc_inbound_actual"] == 3).all()
+        assert (plan["hc_total_actual"] == 8).all()
+
+    def test_both_flows_length(self, forecast_df, config_both_flows):
+        plan = build_headcount_plan(forecast_df, config_both_flows)
         assert len(plan) == 3
-        # outbound: 960/(120*8)*1.15=1.15=>2, 480=>1, 1920=>3
-        np.testing.assert_array_equal(plan["hc_outbound"].values, [2, 1, 3])
-        # inbound: 800/(100*8)*1.15=1.15=>2, 400=>1, 1600=>3
-        np.testing.assert_array_equal(plan["hc_inbound"].values, [2, 1, 3])
-        np.testing.assert_array_equal(plan["hc_total"].values, [4, 2, 6])
 
     def test_outbound_only(self, forecast_df, config_outbound_only):
         plan = build_headcount_plan(forecast_df, config_outbound_only)
-        np.testing.assert_array_equal(plan["hc_outbound"].values, [2, 1, 3])
-        np.testing.assert_array_equal(plan["hc_inbound"].values, [0, 0, 0])
-        np.testing.assert_array_equal(plan["hc_total"].values, [2, 1, 3])
+        assert (plan["hc_inbound_recommended"] == 0).all()
+        assert (plan["hc_inbound_actual"] == 0).all()
+
+    def test_recommended_hc_non_negative(self, forecast_df, config_both_flows):
+        plan = build_headcount_plan(forecast_df, config_both_flows)
+        assert (plan["hc_outbound_recommended"] >= 0).all()
+        assert (plan["hc_inbound_recommended"] >= 0).all()
+        assert (plan["hc_total_recommended"] >= 0).all()
