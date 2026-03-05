@@ -34,3 +34,4 @@ current_staffing_inbound: 0
 # Report configuration
 language: "es"              # "es" for Spanish, "en" for English
 forecast_horizon: 28        # Days to forecast (default: 28)
+cost_per_hour: 0.0          # Hourly cost per worker (0 = skip cost analysis)

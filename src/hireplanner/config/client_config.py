@@ -22,6 +22,7 @@ class ClientConfig:
     current_staffing_inbound: int = 0
     language: str = "en"
     forecast_horizon: int = 28
+    cost_per_hour: float = 0.0
 
     def validate(self):
         """Validate config values. Raises ConfigError on invalid values."""
@@ -66,6 +67,9 @@ class ClientConfig:
         # Language
         if self.language not in ("es", "en"):
             raise ConfigError(f"language must be 'es' or 'en', got '{self.language}'")
+        # Cost per hour
+        if self.cost_per_hour < 0:
+            raise ConfigError("cost_per_hour must be non-negative")
         # Horizon
         if self.forecast_horizon < 1:
             raise ConfigError("forecast_horizon must be at least 1")
@@ -106,6 +110,7 @@ def load_client_config(path: str | Path) -> ClientConfig:
             current_staffing_inbound=int(raw.get("current_staffing_inbound", 0)),
             language=str(raw.get("language", "en")),
             forecast_horizon=int(raw.get("forecast_horizon", 28)),
+            cost_per_hour=float(raw.get("cost_per_hour", 0.0)),
         )
     except (ValueError, TypeError) as e:
         raise ConfigError(f"Invalid config value: {e}")

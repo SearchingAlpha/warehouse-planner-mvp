@@ -49,6 +49,9 @@ headers:
   hc_total: "HC Total"
   hc_recommended: "(Rec)"
   hc_actual: "(Actual)"
+  daily_cost_recommended: "Daily Cost (Rec)"
+  daily_cost_actual: "Daily Cost (Actual)"
+  daily_savings: "Daily Savings"
   target_backlog: "Target Backlog"
   forecast_col: "Forecast"
   actual: "Actual"
@@ -81,6 +84,11 @@ labels:
   weekly_summary: "Weekly Summary"
   avg_daily_hc: "Avg Daily HC"
   total_hours: "Total Hours"
+  total_cost_recommended: "Total Cost (Rec)"
+  total_cost_actual: "Total Cost (Actual)"
+  total_savings: "Total Savings"
+  avg_daily_savings: "Avg Daily Savings"
+  cost_savings: "Cost Savings"
 """
 
 
@@ -95,7 +103,7 @@ def _make_locales_dir(tmp_path):
     return locales_dir
 
 
-def _make_config(active_flows=None, current_staffing_outbound=0, current_staffing_inbound=0):
+def _make_config(active_flows=None, current_staffing_outbound=0, current_staffing_inbound=0, cost_per_hour=0.0):
     if active_flows is None:
         active_flows = ["outbound", "inbound"]
     return ClientConfig(
@@ -114,6 +122,7 @@ def _make_config(active_flows=None, current_staffing_outbound=0, current_staffin
         current_staffing_inbound=current_staffing_inbound,
         language="en",
         forecast_horizon=28,
+        cost_per_hour=cost_per_hour,
     )
 
 
@@ -156,22 +165,35 @@ def _make_backlog_df(n_days=7):
     return pd.DataFrame(rows)
 
 
-def _make_headcount_df(n_days=7):
+def _make_headcount_df(n_days=7, cost_per_hour=0.0, hours_per_shift=8):
     start = date(2026, 3, 1)
     rows = []
     for i in range(n_days):
         d = pd.Timestamp(start + timedelta(days=i))
+        hc_rec = 15 + 2 * i
+        hc_act = 12
+        if cost_per_hour > 0:
+            cost_rec = hc_rec * cost_per_hour * hours_per_shift
+            cost_act = hc_act * cost_per_hour * hours_per_shift
+            savings = cost_act - cost_rec
+        else:
+            cost_rec = 0
+            cost_act = 0
+            savings = 0
         rows.append({
             "date": d,
             "hc_outbound_recommended": 10 + i,
             "hc_outbound_actual": 8,
             "hc_inbound_recommended": 5 + i,
             "hc_inbound_actual": 4,
-            "hc_total_recommended": 15 + 2 * i,
-            "hc_total_actual": 12,
+            "hc_total_recommended": hc_rec,
+            "hc_total_actual": hc_act,
             "hc_outbound": 10 + i,
             "hc_inbound": 5 + i,
-            "hc_total": 15 + 2 * i,
+            "hc_total": hc_rec,
+            "daily_cost_recommended": cost_rec,
+            "daily_cost_actual": cost_act,
+            "daily_savings": savings,
         })
     return pd.DataFrame(rows)
 
@@ -210,7 +232,10 @@ def _generate_report(tmp_path, config=None, forecast_df=None, backlog_dfs=None,
             "inbound": _make_backlog_df(),
         }
     if headcount_df is None:
-        headcount_df = _make_headcount_df()
+        headcount_df = _make_headcount_df(
+            cost_per_hour=config.cost_per_hour,
+            hours_per_shift=config.hours_per_shift,
+        )
 
     locales_dir = _make_locales_dir(tmp_path)
     output_dir = tmp_path / "output" / "report_dir"
@@ -310,6 +335,18 @@ class TestMarkdownGenerator:
         # Backlog section should not have actual columns
         assert "End Backlog (Actual)" not in content
 
+    def test_three_headcount_charts(self, tmp_path):
+        """Report generates separate headcount PNGs for outbound, inbound, and total."""
+        result_path = _generate_report(tmp_path)
+        figures_dir = Path(result_path).parent / "figures"
+        assert (figures_dir / "headcount_outbound.png").exists()
+        assert (figures_dir / "headcount_inbound.png").exists()
+        assert (figures_dir / "headcount_total.png").exists()
+        content = Path(result_path).read_text(encoding="utf-8")
+        assert "headcount_outbound.png" in content
+        assert "headcount_inbound.png" in content
+        assert "headcount_total.png" in content
+
     def test_alert_indicators_in_backlog(self, tmp_path):
         alert_series_dict = {
             "outbound": pd.Series(["Healthy", "Watch", "Critical"] + ["Healthy"] * 4),
@@ -320,3 +357,27 @@ class TestMarkdownGenerator:
         assert "[OK]" in content
         assert "[!!]" in content
         assert "[CRITICAL]" in content
+
+    def test_cost_savings_in_executive_summary(self, tmp_path):
+        config = _make_config(current_staffing_outbound=10, current_staffing_inbound=5, cost_per_hour=12.50)
+        result_path = _generate_report(tmp_path, config=config)
+        content = Path(result_path).read_text(encoding="utf-8")
+        assert "Total Savings" in content
+        assert "Avg Daily Savings" in content
+
+    def test_cost_savings_chart_generated(self, tmp_path):
+        config = _make_config(current_staffing_outbound=10, current_staffing_inbound=5, cost_per_hour=12.50)
+        result_path = _generate_report(tmp_path, config=config)
+        figures_dir = Path(result_path).parent / "figures"
+        assert (figures_dir / "cost_savings.png").exists()
+        content = Path(result_path).read_text(encoding="utf-8")
+        assert "cost_savings.png" in content
+
+    def test_no_cost_columns_when_cost_per_hour_zero(self, tmp_path):
+        config = _make_config(current_staffing_outbound=10, current_staffing_inbound=5, cost_per_hour=0.0)
+        result_path = _generate_report(tmp_path, config=config)
+        content = Path(result_path).read_text(encoding="utf-8")
+        assert "Daily Cost (Rec)" not in content
+        assert "cost_savings.png" not in content
+        figures_dir = Path(result_path).parent / "figures"
+        assert not (figures_dir / "cost_savings.png").exists()

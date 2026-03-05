@@ -109,6 +109,46 @@ def save_headcount_chart(
     plt.close(fig)
 
 
+def save_cost_savings_chart(
+    dates,
+    daily_savings: np.ndarray,
+    cumulative_savings: np.ndarray,
+    title: str,
+    path: str | Path,
+) -> None:
+    """Save a cost savings chart with daily bars and cumulative line."""
+    dates = pd.to_datetime(dates)
+    fig, ax1 = plt.subplots(figsize=(12, 5))
+
+    # Daily savings as colored bars (green=positive, red=negative)
+    colors = ["#2E7D32" if s >= 0 else "#C62828" for s in daily_savings]
+    ax1.bar(dates, daily_savings, color=colors, alpha=0.7, label="Daily Savings")
+    ax1.set_ylabel("Daily Savings ($)")
+    ax1.axhline(y=0, color="black", linewidth=0.5)
+
+    # Cumulative savings as line on secondary axis
+    ax2 = ax1.twinx()
+    cum_color = "#2E75B6" if cumulative_savings[-1] >= 0 else "#C62828"
+    ax2.plot(dates, cumulative_savings, color=cum_color, linewidth=2.5,
+             label="Cumulative Savings", marker="o", markersize=3)
+    ax2.set_ylabel("Cumulative Savings ($)")
+
+    ax1.set_title(title, fontsize=13, fontweight="bold")
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d"))
+    ax1.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+
+    # Combined legend
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper left", fontsize=9)
+
+    ax1.grid(axis="y", alpha=0.3)
+    fig.autofmt_xdate()
+    fig.tight_layout()
+    fig.savefig(str(path), dpi=150)
+    plt.close(fig)
+
+
 def save_accuracy_chart(
     dates,
     forecast: np.ndarray,

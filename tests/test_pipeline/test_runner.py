@@ -27,6 +27,7 @@ def _make_config_file(tmp_path):
         "current_staffing_inbound": 0,
         "language": "en",
         "forecast_horizon": 7,  # Short horizon for fast tests
+        "cost_per_hour": 0.0,
     }
     config_path = tmp_path / "test_client.yaml"
     with open(config_path, "w") as f:
@@ -90,6 +91,9 @@ def _make_locale_files(tmp_path):
             "actual": "Actual",
             "error": "Abs Error",
             "pct_error": "% Error",
+            "daily_cost_recommended": "Daily Cost (Rec)",
+            "daily_cost_actual": "Daily Cost (Actual)",
+            "daily_savings": "Daily Savings",
         },
         "alerts": {
             "healthy": "Healthy",
@@ -117,6 +121,11 @@ def _make_locale_files(tmp_path):
             "weekly_summary": "Weekly Summary",
             "avg_daily_hc": "Avg Daily HC",
             "total_hours": "Total Hours",
+            "total_cost_recommended": "Total Cost (Rec)",
+            "total_cost_actual": "Total Cost (Actual)",
+            "total_savings": "Total Savings",
+            "avg_daily_savings": "Avg Daily Savings",
+            "cost_savings": "Cost Savings",
         },
     }
 

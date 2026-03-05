@@ -335,7 +335,9 @@ output/{client}_{date}/
     ├── forecast_inbound.png
     ├── backlog_outbound.png
     ├── backlog_inbound.png
-    ├── headcount.png
+    ├── headcount_outbound.png
+    ├── headcount_inbound.png
+    ├── headcount_total.png
     └── accuracy.png
 ```
 

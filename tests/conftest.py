@@ -29,6 +29,7 @@ def sample_config():
         current_staffing_inbound=0,
         language="en",
         forecast_horizon=28,
+        cost_per_hour=0.0,
     )
 
 
@@ -53,6 +54,7 @@ def sample_outbound_only_config():
         current_staffing_inbound=0,
         language="en",
         forecast_horizon=28,
+        cost_per_hour=0.0,
     )
 
 

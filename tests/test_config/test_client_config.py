@@ -48,6 +48,7 @@ class TestLoadValidConfig:
         assert config.current_staffing_inbound == 0
         assert config.language == "en"
         assert config.forecast_horizon == 28
+        assert config.cost_per_hour == 0.0
 
     def test_custom_values_override_defaults(self, tmp_path):
         data = _valid_data(
@@ -233,6 +234,25 @@ class TestCurrentStaffing:
         path = _write_yaml(tmp_path, data)
         with pytest.raises(ConfigError, match="current_staffing_inbound must be non-negative"):
             load_client_config(path)
+
+
+class TestCostPerHour:
+    def test_default_is_zero(self, tmp_path):
+        path = _write_yaml(tmp_path, _valid_data())
+        config = load_client_config(path)
+        assert config.cost_per_hour == 0.0
+
+    def test_negative_raises_error(self, tmp_path):
+        data = _valid_data(cost_per_hour=-5.0)
+        path = _write_yaml(tmp_path, data)
+        with pytest.raises(ConfigError, match="cost_per_hour must be non-negative"):
+            load_client_config(path)
+
+    def test_custom_value_loads(self, tmp_path):
+        data = _valid_data(cost_per_hour=12.50)
+        path = _write_yaml(tmp_path, data)
+        config = load_client_config(path)
+        assert config.cost_per_hour == 12.50
 
 
 class TestFileErrors:

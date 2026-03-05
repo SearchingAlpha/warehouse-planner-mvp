@@ -90,4 +90,20 @@ def build_headcount_plan(
     result["hc_inbound"] = result["hc_inbound_recommended"]
     result["hc_total"] = result["hc_total_recommended"]
 
+    # Cost columns
+    if config.cost_per_hour > 0:
+        result["daily_cost_recommended"] = (
+            result["hc_total_recommended"] * config.cost_per_hour * config.hours_per_shift
+        )
+        result["daily_cost_actual"] = (
+            result["hc_total_actual"] * config.cost_per_hour * config.hours_per_shift
+        )
+        result["daily_savings"] = (
+            result["daily_cost_actual"] - result["daily_cost_recommended"]
+        )
+    else:
+        result["daily_cost_recommended"] = 0
+        result["daily_cost_actual"] = 0
+        result["daily_savings"] = 0
+
     return result

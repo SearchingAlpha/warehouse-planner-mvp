@@ -132,3 +132,25 @@ class TestBuildHeadcountPlan:
         assert (plan["hc_outbound_recommended"] >= 0).all()
         assert (plan["hc_inbound_recommended"] >= 0).all()
         assert (plan["hc_total_recommended"] >= 0).all()
+
+    def test_cost_columns_present_when_cost_per_hour_gt_zero(self, forecast_df, config_both_flows):
+        config_both_flows.cost_per_hour = 12.50
+        plan = build_headcount_plan(forecast_df, config_both_flows)
+        assert "daily_cost_recommended" in plan.columns
+        assert "daily_cost_actual" in plan.columns
+        assert "daily_savings" in plan.columns
+        assert (plan["daily_cost_recommended"] > 0).any()
+        assert (plan["daily_cost_actual"] > 0).all()
+
+    def test_cost_columns_zero_when_cost_per_hour_zero(self, forecast_df, config_both_flows):
+        config_both_flows.cost_per_hour = 0.0
+        plan = build_headcount_plan(forecast_df, config_both_flows)
+        assert (plan["daily_cost_recommended"] == 0).all()
+        assert (plan["daily_cost_actual"] == 0).all()
+        assert (plan["daily_savings"] == 0).all()
+
+    def test_savings_equals_actual_minus_recommended(self, forecast_df, config_both_flows):
+        config_both_flows.cost_per_hour = 10.0
+        plan = build_headcount_plan(forecast_df, config_both_flows)
+        expected = plan["daily_cost_actual"] - plan["daily_cost_recommended"]
+        pd.testing.assert_series_equal(plan["daily_savings"], expected, check_names=False)

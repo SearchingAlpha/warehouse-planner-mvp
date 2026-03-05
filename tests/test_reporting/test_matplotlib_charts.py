@@ -9,6 +9,7 @@ from hireplanner.reporting.matplotlib_charts import (
     save_forecast_chart,
     save_backlog_chart,
     save_headcount_chart,
+    save_cost_savings_chart,
     save_accuracy_chart,
 )
 
@@ -78,6 +79,22 @@ class TestSaveHeadcountChart:
                 "Inbound (Rec)": np.array([5, 6, 5, 7, 5, 6, 5]),
             },
             title="Test HC",
+            path=path,
+        )
+        assert path.exists()
+        assert path.stat().st_size > 0
+
+
+class TestSaveCostSavingsChart:
+    def test_creates_png(self, dates, figures_dir):
+        path = figures_dir / "cost_savings.png"
+        daily_savings = np.array([100, -50, 200, 150, -30, 80, 120])
+        cumulative_savings = np.cumsum(daily_savings)
+        save_cost_savings_chart(
+            dates,
+            daily_savings=daily_savings,
+            cumulative_savings=cumulative_savings,
+            title="Test Cost Savings",
             path=path,
         )
         assert path.exists()

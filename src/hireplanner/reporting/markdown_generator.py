@@ -37,6 +37,7 @@ def _alert_indicator(status: str) -> str:
 
 def _write_executive_summary(
     config, alert_summary, accuracy_metrics, headcount_summary, t_fn, locale,
+    cost_summary=None,
 ) -> str:
     """Generate the Executive Summary section."""
     lines = []
@@ -67,6 +68,16 @@ def _write_executive_summary(
         lines.append(
             f"| {t_fn('labels.peak_headcount', locale)} "
             f"| {headcount_summary.get('peak_total', 0)} |"
+        )
+
+    if cost_summary and cost_summary.get("total_savings", 0) != 0:
+        lines.append(
+            f"| {t_fn('labels.total_savings', locale)} "
+            f"| ${cost_summary['total_savings']:,.2f} |"
+        )
+        lines.append(
+            f"| {t_fn('labels.avg_daily_savings', locale)} "
+            f"| ${cost_summary['avg_daily_savings']:,.2f} |"
         )
 
     lines.append("")
@@ -240,6 +251,12 @@ def _write_headcount_plan(config, headcount_df, figures_dir, t_fn, locale) -> st
         cols[total_act_label] = headcount_df["hc_total_actual"]
         hc_chart_data[total_act_label] = headcount_df["hc_total_actual"].values
 
+    # Cost columns (only when cost_per_hour > 0 and there is actual staffing)
+    if config.cost_per_hour > 0 and total_actual_staffing > 0:
+        cols[t_fn("headers.daily_cost_recommended", locale)] = headcount_df["daily_cost_recommended"].round(2)
+        cols[t_fn("headers.daily_cost_actual", locale)] = headcount_df["daily_cost_actual"].round(2)
+        cols[t_fn("headers.daily_savings", locale)] = headcount_df["daily_savings"].round(2)
+
     display_df = pd.DataFrame(cols)
     lines.append(_df_to_markdown(display_df))
     lines.append("")
@@ -263,15 +280,78 @@ def _write_headcount_plan(config, headcount_df, figures_dir, t_fn, locale) -> st
     lines.append(_df_to_markdown(weekly))
     lines.append("")
 
-    chart_name = "headcount.png"
+    # One chart per flow + one total chart
+    for flow in config.active_flows:
+        flow_label = t_fn(f"labels.{flow}", locale)
+        current_staffing = getattr(config, f"current_staffing_{flow}", 0)
+        flow_chart_data = {}
+
+        rec_label = t_fn(f"headers.hc_{flow}", locale) + " " + t_fn("headers.hc_recommended", locale)
+        flow_chart_data[rec_label] = headcount_df[f"hc_{flow}_recommended"].values
+
+        if current_staffing > 0:
+            act_label = t_fn(f"headers.hc_{flow}", locale) + " " + t_fn("headers.hc_actual", locale)
+            flow_chart_data[act_label] = headcount_df[f"hc_{flow}_actual"].values
+
+        chart_name = f"headcount_{flow}.png"
+        save_headcount_chart(
+            headcount_df["date"].values,
+            flow_chart_data,
+            title=f"{flow_label} - {t_fn('tabs.headcount_plan', locale)}",
+            path=figures_dir / chart_name,
+        )
+        lines.append(f"![{flow_label} headcount](figures/{chart_name})")
+        lines.append("")
+
+    # Total headcount chart
+    total_chart_data = {}
+    total_rec_label_chart = t_fn("headers.hc_total", locale) + " " + t_fn("headers.hc_recommended", locale)
+    total_chart_data[total_rec_label_chart] = headcount_df["hc_total_recommended"].values
+
+    total_actual_staffing_chart = config.current_staffing_outbound + config.current_staffing_inbound
+    if total_actual_staffing_chart > 0:
+        total_act_label_chart = t_fn("headers.hc_total", locale) + " " + t_fn("headers.hc_actual", locale)
+        total_chart_data[total_act_label_chart] = headcount_df["hc_total_actual"].values
+
+    chart_name = "headcount_total.png"
     save_headcount_chart(
         headcount_df["date"].values,
-        hc_chart_data,
-        title=t_fn("tabs.headcount_plan", locale),
+        total_chart_data,
+        title=f"{t_fn('labels.total', locale)} - {t_fn('tabs.headcount_plan', locale)}",
         path=figures_dir / chart_name,
     )
-    lines.append(f"![Headcount plan](figures/{chart_name})")
+    lines.append(f"![Total headcount](figures/{chart_name})")
     lines.append("")
+
+    # Cost savings subsection
+    if config.cost_per_hour > 0 and total_actual_staffing_chart > 0:
+        from hireplanner.reporting.matplotlib_charts import save_cost_savings_chart
+
+        total_cost_rec = headcount_df["daily_cost_recommended"].sum()
+        total_cost_act = headcount_df["daily_cost_actual"].sum()
+        total_savings = total_cost_act - total_cost_rec
+
+        lines.append(f"### {t_fn('labels.cost_savings', locale)}")
+        lines.append("")
+        lines.append("| Metric | Value |")
+        lines.append("| --- | --- |")
+        lines.append(f"| {t_fn('labels.total_cost_recommended', locale)} | ${total_cost_rec:,.2f} |")
+        lines.append(f"| {t_fn('labels.total_cost_actual', locale)} | ${total_cost_act:,.2f} |")
+        lines.append(f"| {t_fn('labels.total_savings', locale)} | ${total_savings:,.2f} |")
+        lines.append("")
+
+        daily_savings = headcount_df["daily_savings"].values
+        cumulative_savings = np.cumsum(daily_savings)
+        chart_name_savings = "cost_savings.png"
+        save_cost_savings_chart(
+            headcount_df["date"].values,
+            daily_savings,
+            cumulative_savings,
+            title=t_fn("labels.cost_savings", locale),
+            path=figures_dir / chart_name_savings,
+        )
+        lines.append(f"![Cost Savings](figures/{chart_name_savings})")
+        lines.append("")
 
     return "\n".join(lines)
 
@@ -373,11 +453,27 @@ def generate_markdown_report(
             accuracy_metrics = dict(accuracy_metrics)
             accuracy_metrics["trend"] = accuracy_data.get("trend", "stable")
 
+    # Compute cost summary if applicable
+    cost_summary = None
+    total_actual_staffing = config.current_staffing_outbound + config.current_staffing_inbound
+    if config.cost_per_hour > 0 and total_actual_staffing > 0 and not headcount_df.empty:
+        total_cost_rec = float(headcount_df["daily_cost_recommended"].sum())
+        total_cost_act = float(headcount_df["daily_cost_actual"].sum())
+        total_savings = total_cost_act - total_cost_rec
+        n_days = len(headcount_df)
+        cost_summary = {
+            "total_cost_recommended": total_cost_rec,
+            "total_cost_actual": total_cost_act,
+            "total_savings": total_savings,
+            "avg_daily_savings": total_savings / n_days if n_days else 0,
+        }
+
     sections = []
 
     # Section 1: Executive Summary
     sections.append(_write_executive_summary(
         config, alert_summary, accuracy_metrics, headcount_summary, t, locale,
+        cost_summary=cost_summary,
     ))
 
     # Section 2: Daily Forecast
