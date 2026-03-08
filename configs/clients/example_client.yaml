@@ -18,8 +18,17 @@ initial_backlog_outbound: 3500
 initial_backlog_inbound: 1200
 
 target_backlog_ratio: 0.35
-current_staffing_outbound: 100
-current_staffing_inbound: 100
+# Per-rotation current staffing (must match shift_patterns order)
+current_staffing_outbound: [110, 100]    # early: 70, central: 50
+current_staffing_inbound: [90, 90]     # early: 60, central: 40
+
+# Shift rotations: each rotation has a fixed headcount per week.
+# days: 0=Monday, 1=Tuesday, ..., 6=Sunday
+shift_patterns:
+  - name: "early"
+    days: [0, 1, 2, 3]      # Mon-Thu
+  - name: "central"
+    days: [2, 3, 4, 5]      # Wed-Sat
 
 language: "es"
 forecast_horizon: 28

@@ -46,6 +46,7 @@ class TestLoadValidConfig:
         assert config.target_backlog_ratio == 0.35
         assert config.current_staffing_outbound == 0
         assert config.current_staffing_inbound == 0
+        assert config.shift_patterns is None
         assert config.language == "en"
         assert config.forecast_horizon == 28
         assert config.cost_per_hour == 0.0
@@ -216,7 +217,7 @@ class TestTargetBacklogRatio:
 
 
 class TestCurrentStaffing:
-    def test_valid_staffing(self, tmp_path):
+    def test_valid_staffing_scalar(self, tmp_path):
         data = _valid_data(current_staffing_outbound=10, current_staffing_inbound=5)
         path = _write_yaml(tmp_path, data)
         config = load_client_config(path)
@@ -233,6 +234,131 @@ class TestCurrentStaffing:
         data = _valid_data(current_staffing_inbound=-1)
         path = _write_yaml(tmp_path, data)
         with pytest.raises(ConfigError, match="current_staffing_inbound must be non-negative"):
+            load_client_config(path)
+
+    def test_per_rotation_staffing_list(self, tmp_path):
+        data = _valid_data(
+            shift_patterns=[
+                {"name": "early", "days": [0, 1, 2, 3]},
+                {"name": "central", "days": [2, 3, 4, 5]},
+            ],
+            current_staffing_outbound=[70, 50],
+            current_staffing_inbound=[60, 40],
+        )
+        path = _write_yaml(tmp_path, data)
+        config = load_client_config(path)
+        assert config.current_staffing_outbound == [70, 50]
+        assert config.current_staffing_inbound == [60, 40]
+
+    def test_list_length_mismatch_raises_error(self, tmp_path):
+        data = _valid_data(
+            shift_patterns=[
+                {"name": "early", "days": [0, 1, 2, 3]},
+                {"name": "central", "days": [2, 3, 4, 5]},
+            ],
+            current_staffing_outbound=[70, 50, 30],  # 3 values but 2 patterns
+        )
+        path = _write_yaml(tmp_path, data)
+        with pytest.raises(ConfigError, match="has 3 values but there are 2 shift patterns"):
+            load_client_config(path)
+
+    def test_negative_value_in_list_raises_error(self, tmp_path):
+        data = _valid_data(
+            shift_patterns=[
+                {"name": "early", "days": [0, 1, 2, 3]},
+                {"name": "central", "days": [2, 3, 4, 5]},
+            ],
+            current_staffing_outbound=[70, -10],
+        )
+        path = _write_yaml(tmp_path, data)
+        with pytest.raises(ConfigError, match="current_staffing_outbound values must be non-negative"):
+            load_client_config(path)
+
+    def test_has_actual_staffing_scalar(self):
+        config = ClientConfig(
+            client_name="test", active_flows=["outbound"],
+            productivity_inbound=100, productivity_outbound=100,
+            current_staffing_outbound=5, current_staffing_inbound=0,
+        )
+        assert config.has_actual_staffing("outbound") is True
+        assert config.has_actual_staffing("inbound") is False
+
+    def test_has_actual_staffing_list(self):
+        config = ClientConfig(
+            client_name="test", active_flows=["outbound"],
+            productivity_inbound=100, productivity_outbound=100,
+            current_staffing_outbound=[70, 50], current_staffing_inbound=[0, 0],
+            shift_patterns=[
+                {"name": "early", "days": [0, 1, 2, 3]},
+                {"name": "central", "days": [2, 3, 4, 5]},
+            ],
+        )
+        assert config.has_actual_staffing("outbound") is True
+        assert config.has_actual_staffing("inbound") is False
+
+
+class TestShiftPatterns:
+    def test_default_is_none(self, tmp_path):
+        path = _write_yaml(tmp_path, _valid_data())
+        config = load_client_config(path)
+        assert config.shift_patterns is None
+
+    def test_get_shift_patterns_default(self, tmp_path):
+        """When None, get_shift_patterns returns all-week default."""
+        path = _write_yaml(tmp_path, _valid_data())
+        config = load_client_config(path)
+        patterns = config.get_shift_patterns()
+        assert len(patterns) == 1
+        assert patterns[0]["days"] == [0, 1, 2, 3, 4, 5, 6]
+
+    def test_weekday_pattern_loads(self, tmp_path):
+        data = _valid_data(shift_patterns=[
+            {"name": "weekday", "days": [0, 1, 2, 3, 4]},
+        ])
+        path = _write_yaml(tmp_path, data)
+        config = load_client_config(path)
+        assert len(config.shift_patterns) == 1
+        assert config.shift_patterns[0]["days"] == [0, 1, 2, 3, 4]
+
+    def test_two_rotations_load(self, tmp_path):
+        data = _valid_data(shift_patterns=[
+            {"name": "early", "days": [0, 1, 2, 3]},
+            {"name": "central", "days": [2, 3, 4, 5]},
+        ])
+        path = _write_yaml(tmp_path, data)
+        config = load_client_config(path)
+        assert len(config.shift_patterns) == 2
+        assert config.shift_patterns[0]["name"] == "early"
+        assert config.shift_patterns[1]["name"] == "central"
+
+    def test_empty_list_raises_error(self, tmp_path):
+        data = _valid_data(shift_patterns=[])
+        path = _write_yaml(tmp_path, data)
+        with pytest.raises(ConfigError, match="shift_patterns must be a non-empty list"):
+            load_client_config(path)
+
+    def test_missing_days_key_raises_error(self, tmp_path):
+        data = _valid_data(shift_patterns=[{"name": "bad"}])
+        path = _write_yaml(tmp_path, data)
+        with pytest.raises(ConfigError, match="must have a 'days' key"):
+            load_client_config(path)
+
+    def test_empty_days_raises_error(self, tmp_path):
+        data = _valid_data(shift_patterns=[{"name": "bad", "days": []}])
+        path = _write_yaml(tmp_path, data)
+        with pytest.raises(ConfigError, match="days must be a non-empty list"):
+            load_client_config(path)
+
+    def test_invalid_day_value_raises_error(self, tmp_path):
+        data = _valid_data(shift_patterns=[{"name": "bad", "days": [0, 7]}])
+        path = _write_yaml(tmp_path, data)
+        with pytest.raises(ConfigError, match="integers 0-6"):
+            load_client_config(path)
+
+    def test_duplicate_days_raises_error(self, tmp_path):
+        data = _valid_data(shift_patterns=[{"name": "bad", "days": [0, 1, 0]}])
+        path = _write_yaml(tmp_path, data)
+        with pytest.raises(ConfigError, match="must not contain duplicates"):
             load_client_config(path)
 
 

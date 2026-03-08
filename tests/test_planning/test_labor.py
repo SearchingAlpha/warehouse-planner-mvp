@@ -154,3 +154,152 @@ class TestBuildHeadcountPlan:
         plan = build_headcount_plan(forecast_df, config_both_flows)
         expected = plan["daily_cost_actual"] - plan["daily_cost_recommended"]
         pd.testing.assert_series_equal(plan["daily_savings"], expected, check_names=False)
+
+    def test_weekly_stabilization_default_patterns(self):
+        """Default shift patterns (all-week) → each calendar week gets constant HC."""
+        # 2026-03-02 is a Monday → 14 days = 2 full weeks
+        dates = pd.date_range("2026-03-02", periods=14, freq="D")
+        ob = pd.DataFrame({
+            "date": dates, "flow": "outbound",
+            "forecast_p50": [800, 1200, 600, 1400, 900, 1100, 700,
+                             1000, 1300, 500, 1500, 800, 1200, 600],
+        })
+        ib = pd.DataFrame({
+            "date": dates, "flow": "inbound",
+            "forecast_p50": [400] * 14,
+        })
+        forecast_df = pd.concat([ob, ib], ignore_index=True)
+
+        config = ClientConfig(
+            client_name="test",
+            active_flows=["outbound", "inbound"],
+            productivity_outbound=120,
+            productivity_inbound=100,
+            hours_per_shift=8,
+            initial_backlog_outbound=0,
+            initial_backlog_inbound=0,
+            target_backlog_ratio=0.0,
+            current_staffing_outbound=5,
+            current_staffing_inbound=3,
+        )
+        plan = build_headcount_plan(forecast_df, config)
+        # Week 1 (days 0-6) should have constant outbound HC
+        week1 = plan["hc_outbound_recommended"].iloc[:7]
+        assert len(set(week1)) == 1, f"Week 1 HC not constant: {list(week1)}"
+        # Week 2 (days 7-13) should have constant outbound HC
+        week2 = plan["hc_outbound_recommended"].iloc[7:]
+        assert len(set(week2)) == 1, f"Week 2 HC not constant: {list(week2)}"
+
+    def test_weekday_pattern_zeros_weekends(self):
+        """Mon-Fri shift pattern produces zero HC on Saturday and Sunday."""
+        # 2026-03-02 is a Monday
+        dates = pd.date_range("2026-03-02", periods=7, freq="D")
+        ob = pd.DataFrame({
+            "date": dates, "flow": "outbound",
+            "forecast_p50": [1000] * 7,
+        })
+        ib = pd.DataFrame({
+            "date": dates, "flow": "inbound",
+            "forecast_p50": [500] * 7,
+        })
+        forecast_df = pd.concat([ob, ib], ignore_index=True)
+
+        config = ClientConfig(
+            client_name="test",
+            active_flows=["outbound", "inbound"],
+            productivity_outbound=120,
+            productivity_inbound=100,
+            hours_per_shift=8,
+            initial_backlog_outbound=0,
+            initial_backlog_inbound=0,
+            target_backlog_ratio=0.0,
+            current_staffing_outbound=5,
+            current_staffing_inbound=3,
+            shift_patterns=[{"name": "weekday", "days": [0, 1, 2, 3, 4]}],
+        )
+        plan = build_headcount_plan(forecast_df, config)
+        # Saturday (index 5) and Sunday (index 6) should have zero recommended HC
+        assert plan["hc_outbound_recommended"].iloc[5] == 0
+        assert plan["hc_outbound_recommended"].iloc[6] == 0
+        # Weekdays should have HC > 0
+        assert (plan["hc_outbound_recommended"].iloc[:5] > 0).all()
+
+    def test_two_rotation_pattern(self):
+        """Early+Central pattern creates a realistic daily curve."""
+        # 2026-03-02 is a Monday
+        dates = pd.date_range("2026-03-02", periods=7, freq="D")
+        ob = pd.DataFrame({
+            "date": dates, "flow": "outbound",
+            "forecast_p50": [1000] * 7,
+        })
+        ib = pd.DataFrame({
+            "date": dates, "flow": "inbound",
+            "forecast_p50": [500] * 7,
+        })
+        forecast_df = pd.concat([ob, ib], ignore_index=True)
+
+        config = ClientConfig(
+            client_name="test",
+            active_flows=["outbound", "inbound"],
+            productivity_outbound=120,
+            productivity_inbound=100,
+            hours_per_shift=8,
+            initial_backlog_outbound=0,
+            initial_backlog_inbound=0,
+            target_backlog_ratio=0.0,
+            current_staffing_outbound=0,
+            current_staffing_inbound=0,
+            shift_patterns=[
+                {"name": "early", "days": [0, 1, 2, 3]},    # Mon-Thu
+                {"name": "central", "days": [2, 3, 4, 5]},   # Wed-Sat
+            ],
+        )
+        plan = build_headcount_plan(forecast_df, config)
+        # Sunday (index 6) is uncovered
+        assert plan["hc_outbound_recommended"].iloc[6] == 0
+        # Weekdays are covered
+        assert plan["hc_outbound_recommended"].iloc[0] > 0  # Mon
+        assert plan["hc_outbound_recommended"].iloc[4] > 0  # Fri
+        # Wed/Thu have overlap → HC ≥ Mon/Tue HC
+        assert plan["hc_outbound_recommended"].iloc[2] >= plan["hc_outbound_recommended"].iloc[0]
+
+    def test_per_rotation_actual_staffing(self):
+        """Per-rotation actual staffing creates a daily curve, not a flat line."""
+        # 2026-03-02 is a Monday
+        dates = pd.date_range("2026-03-02", periods=7, freq="D")
+        ob = pd.DataFrame({
+            "date": dates, "flow": "outbound",
+            "forecast_p50": [1000] * 7,
+        })
+        ib = pd.DataFrame({
+            "date": dates, "flow": "inbound",
+            "forecast_p50": [500] * 7,
+        })
+        forecast_df = pd.concat([ob, ib], ignore_index=True)
+
+        config = ClientConfig(
+            client_name="test",
+            active_flows=["outbound", "inbound"],
+            productivity_outbound=120,
+            productivity_inbound=100,
+            hours_per_shift=8,
+            initial_backlog_outbound=0,
+            initial_backlog_inbound=0,
+            target_backlog_ratio=0.0,
+            current_staffing_outbound=[70, 50],
+            current_staffing_inbound=[60, 40],
+            shift_patterns=[
+                {"name": "early", "days": [0, 1, 2, 3]},    # Mon-Thu
+                {"name": "central", "days": [2, 3, 4, 5]},   # Wed-Sat
+            ],
+        )
+        plan = build_headcount_plan(forecast_df, config)
+        # Outbound actual: Mon=70, Tue=70, Wed=120, Thu=120, Fri=50, Sat=50, Sun=0
+        assert plan["hc_outbound_actual"].iloc[0] == 70   # Mon
+        assert plan["hc_outbound_actual"].iloc[2] == 120  # Wed (overlap)
+        assert plan["hc_outbound_actual"].iloc[4] == 50   # Fri
+        assert plan["hc_outbound_actual"].iloc[6] == 0    # Sun
+        # Inbound actual: Mon=60, Wed=100, Fri=40, Sun=0
+        assert plan["hc_inbound_actual"].iloc[0] == 60
+        assert plan["hc_inbound_actual"].iloc[2] == 100
+        assert plan["hc_inbound_actual"].iloc[6] == 0

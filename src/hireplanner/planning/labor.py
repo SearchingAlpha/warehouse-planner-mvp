@@ -42,7 +42,11 @@ def build_headcount_plan(
         hc_total_recommended, hc_total_actual,
         hc_outbound, hc_inbound, hc_total (aliases for recommended)
     """
-    from hireplanner.planning.backlog import calculate_recommended_capacity
+    from hireplanner.planning.backlog import (
+        apply_shift_patterns,
+        calculate_actual_daily_hc,
+        calculate_recommended_capacity,
+    )
 
     dates = forecast_df[forecast_df["flow"] == forecast_df["flow"].iloc[0]]["date"].values
 
@@ -51,6 +55,8 @@ def build_headcount_plan(
     result["hc_outbound_actual"] = 0
     result["hc_inbound_recommended"] = 0
     result["hc_inbound_actual"] = 0
+
+    patterns = config.get_shift_patterns()
 
     if "outbound" in config.active_flows:
         ob = forecast_df[forecast_df["flow"] == "outbound"]["forecast_p50"].values
@@ -62,8 +68,14 @@ def build_headcount_plan(
             config.productivity_outbound,
             config.hours_per_shift,
         )
+        rec_hc, _ = apply_shift_patterns(
+            rec_hc, dates, patterns,
+            config.productivity_outbound, config.hours_per_shift,
+        )
         result["hc_outbound_recommended"] = rec_hc
-        result["hc_outbound_actual"] = config.current_staffing_outbound
+        result["hc_outbound_actual"] = calculate_actual_daily_hc(
+            dates, config.current_staffing_outbound, patterns,
+        )
 
     if "inbound" in config.active_flows:
         ib = forecast_df[forecast_df["flow"] == "inbound"]["forecast_p50"].values
@@ -75,8 +87,14 @@ def build_headcount_plan(
             config.productivity_inbound,
             config.hours_per_shift,
         )
+        rec_hc, _ = apply_shift_patterns(
+            rec_hc, dates, patterns,
+            config.productivity_inbound, config.hours_per_shift,
+        )
         result["hc_inbound_recommended"] = rec_hc
-        result["hc_inbound_actual"] = config.current_staffing_inbound
+        result["hc_inbound_actual"] = calculate_actual_daily_hc(
+            dates, config.current_staffing_inbound, patterns,
+        )
 
     result["hc_total_recommended"] = (
         result["hc_outbound_recommended"] + result["hc_inbound_recommended"]

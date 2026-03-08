@@ -1,9 +1,15 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
 import yaml
 
 class ConfigError(Exception):
     pass
+
+_DEFAULT_SHIFT_PATTERNS = [{"name": "default", "days": [0, 1, 2, 3, 4, 5, 6]}]
 
 @dataclass
 class ClientConfig:
@@ -18,11 +24,25 @@ class ClientConfig:
     initial_backlog_outbound: int = 0
     initial_backlog_inbound: int = 0
     target_backlog_ratio: float = 0.35
-    current_staffing_outbound: int = 0
-    current_staffing_inbound: int = 0
+    current_staffing_outbound: int | list[int] = 0
+    current_staffing_inbound: int | list[int] = 0
+    shift_patterns: list[dict[str, Any]] | None = None
     language: str = "en"
     forecast_horizon: int = 28
     cost_per_hour: float = 0.0
+
+    def get_shift_patterns(self) -> list[dict[str, Any]]:
+        """Return effective shift patterns (default: single all-week rotation)."""
+        if self.shift_patterns is None:
+            return _DEFAULT_SHIFT_PATTERNS
+        return self.shift_patterns
+
+    def has_actual_staffing(self, flow: str) -> bool:
+        """Return True if actual staffing is configured for *flow*."""
+        val = getattr(self, f"current_staffing_{flow}")
+        if isinstance(val, list):
+            return any(v > 0 for v in val)
+        return val > 0
 
     def validate(self):
         """Validate config values. Raises ConfigError on invalid values."""
@@ -60,10 +80,41 @@ class ClientConfig:
         if not 0 <= self.target_backlog_ratio <= 1:
             raise ConfigError("target_backlog_ratio must be between 0 and 1")
         # Current staffing
-        if self.current_staffing_outbound < 0:
-            raise ConfigError("current_staffing_outbound must be non-negative")
-        if self.current_staffing_inbound < 0:
-            raise ConfigError("current_staffing_inbound must be non-negative")
+        n_patterns = len(self.get_shift_patterns())
+        for side in ("outbound", "inbound"):
+            val = getattr(self, f"current_staffing_{side}")
+            if isinstance(val, list):
+                if len(val) != n_patterns:
+                    raise ConfigError(
+                        f"current_staffing_{side} has {len(val)} values "
+                        f"but there are {n_patterns} shift patterns"
+                    )
+                for v in val:
+                    if v < 0:
+                        raise ConfigError(f"current_staffing_{side} values must be non-negative")
+            else:
+                if val < 0:
+                    raise ConfigError(f"current_staffing_{side} must be non-negative")
+        # Shift patterns
+        if self.shift_patterns is not None:
+            if not isinstance(self.shift_patterns, list) or len(self.shift_patterns) == 0:
+                raise ConfigError("shift_patterns must be a non-empty list")
+            for i, pat in enumerate(self.shift_patterns):
+                if not isinstance(pat, dict):
+                    raise ConfigError(f"shift_patterns[{i}] must be a mapping")
+                if "days" not in pat:
+                    raise ConfigError(f"shift_patterns[{i}] must have a 'days' key")
+                days = pat["days"]
+                if not isinstance(days, list) or len(days) == 0:
+                    raise ConfigError(f"shift_patterns[{i}].days must be a non-empty list")
+                for d in days:
+                    if not isinstance(d, int) or d < 0 or d > 6:
+                        raise ConfigError(
+                            f"shift_patterns[{i}].days values must be integers 0-6 "
+                            f"(0=Monday, 6=Sunday), got {d!r}"
+                        )
+                if len(days) != len(set(days)):
+                    raise ConfigError(f"shift_patterns[{i}].days must not contain duplicates")
         # Language
         if self.language not in ("es", "en"):
             raise ConfigError(f"language must be 'es' or 'en', got '{self.language}'")
@@ -73,6 +124,14 @@ class ClientConfig:
         # Horizon
         if self.forecast_horizon < 1:
             raise ConfigError("forecast_horizon must be at least 1")
+
+
+def _parse_staffing(raw_val) -> int | list[int]:
+    """Parse a current_staffing value: int or list of ints."""
+    if isinstance(raw_val, list):
+        return [int(v) for v in raw_val]
+    return int(raw_val)
+
 
 def load_client_config(path: str | Path) -> ClientConfig:
     """Load and validate a client config from a YAML file."""
@@ -92,6 +151,11 @@ def load_client_config(path: str | Path) -> ClientConfig:
     if missing:
         raise ConfigError(f"Missing required config fields: {', '.join(missing)}")
 
+    # Parse shift_patterns
+    shift_patterns = raw.get("shift_patterns", None)
+    if shift_patterns is not None:
+        shift_patterns = list(shift_patterns)
+
     # Build config with defaults
     try:
         config = ClientConfig(
@@ -106,8 +170,9 @@ def load_client_config(path: str | Path) -> ClientConfig:
             initial_backlog_outbound=int(raw.get("initial_backlog_outbound", 0)),
             initial_backlog_inbound=int(raw.get("initial_backlog_inbound", 0)),
             target_backlog_ratio=float(raw.get("target_backlog_ratio", 0.35)),
-            current_staffing_outbound=int(raw.get("current_staffing_outbound", 0)),
-            current_staffing_inbound=int(raw.get("current_staffing_inbound", 0)),
+            current_staffing_outbound=_parse_staffing(raw.get("current_staffing_outbound", 0)),
+            current_staffing_inbound=_parse_staffing(raw.get("current_staffing_inbound", 0)),
+            shift_patterns=shift_patterns,
             language=str(raw.get("language", "en")),
             forecast_horizon=int(raw.get("forecast_horizon", 28)),
             cost_per_hour=float(raw.get("cost_per_hour", 0.0)),

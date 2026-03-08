@@ -10,7 +10,10 @@
       "Bash(rm:*)",
       "mcp__ide__executeCode",
       "Bash(dir:*)",
-      "Bash(printf test output\\\\n:*)"
+      "Bash(printf test output\\\\n:*)",
+      "Bash(grep -E \"\\\\.\\(ini|cfg|yaml|yml|toml|mk|sh\\)$\")",
+      "Bash(wc -l /c/Users/kekoi/Projects/operations_research/warehouse-planner-mvp/src/hireplanner/**/*.py)",
+      "Bash(xargs wc -l)"
     ]
   }
 }

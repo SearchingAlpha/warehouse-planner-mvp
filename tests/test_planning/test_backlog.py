@@ -6,6 +6,8 @@ import pandas as pd
 import pytest
 
 from hireplanner.planning.backlog import (
+    apply_shift_patterns,
+    calculate_actual_daily_hc,
     calculate_all_backlogs,
     calculate_daily_backlog,
     calculate_daily_capacity,
@@ -13,6 +15,7 @@ from hireplanner.planning.backlog import (
     calculate_flow_backlog,
     calculate_recommended_capacity,
     calculate_actual_capacity,
+    solve_rotation_hc,
 )
 
 
@@ -153,6 +156,189 @@ class TestCalculateDaysOfBacklog:
 
 
 # ---------------------------------------------------------------------------
+# solve_rotation_hc
+# ---------------------------------------------------------------------------
+
+class TestSolveRotationHc:
+    def test_single_rotation_all_week(self):
+        """Single rotation covering all 7 days: HC = max of daily needs."""
+        patterns = [{"name": "all", "days": [0, 1, 2, 3, 4, 5, 6]}]
+        needed = np.array([5, 8, 6, 7, 5, 3, 0])  # Mon-Sun
+        result = solve_rotation_hc(needed, patterns)
+        # The single rotation must cover the peak (8)
+        assert result[0] == 8  # Mon
+        assert result[5] == 8  # Sat
+        assert result[6] == 8  # Sun (covered even though need is 0)
+
+    def test_single_rotation_weekdays_only(self):
+        """Mon-Fri rotation: weekends get HC = 0."""
+        patterns = [{"name": "weekday", "days": [0, 1, 2, 3, 4]}]
+        needed = np.array([5, 8, 6, 7, 5, 3, 2])  # Mon-Sun
+        result = solve_rotation_hc(needed, patterns)
+        # Weekdays get max of Mon-Fri needs = 8
+        assert result[0] == 8
+        assert result[4] == 8
+        # Weekends are uncovered → 0
+        assert result[5] == 0
+        assert result[6] == 0
+
+    def test_two_overlapping_rotations_amazon_style(self):
+        """Early (Mon-Thu) + Central (Wed-Sat) with overlap on Wed/Thu."""
+        patterns = [
+            {"name": "early", "days": [0, 1, 2, 3]},    # Mon-Thu
+            {"name": "central", "days": [2, 3, 4, 5]},   # Wed-Sat
+        ]
+        # Need: Mon=5, Tue=5, Wed=10, Thu=10, Fri=5, Sat=5, Sun=0
+        needed = np.array([5, 5, 10, 10, 5, 5, 0])
+        result = solve_rotation_hc(needed, patterns)
+
+        # Verify all daily needs are met
+        for d in range(7):
+            if needed[d] > 0:
+                assert result[d] >= needed[d], f"Day {d}: {result[d]} < {needed[d]}"
+        # Sunday uncovered → 0
+        assert result[6] == 0
+        # Wed/Thu should have more than Mon/Tue (overlap of both rotations)
+        assert result[2] >= result[0]
+
+    def test_zero_demand_produces_zero_hc(self):
+        """No demand means no headcount regardless of patterns."""
+        patterns = [{"name": "all", "days": [0, 1, 2, 3, 4, 5, 6]}]
+        needed = np.zeros(7)
+        result = solve_rotation_hc(needed, patterns)
+        np.testing.assert_array_equal(result, np.zeros(7))
+
+    def test_demand_on_uncovered_day_gets_zero(self):
+        """Demand on a day no rotation covers results in HC = 0 for that day."""
+        patterns = [{"name": "weekday", "days": [0, 1, 2, 3, 4]}]
+        needed = np.array([5, 5, 5, 5, 5, 10, 10])  # Sat/Sun have high demand
+        result = solve_rotation_hc(needed, patterns)
+        assert result[5] == 0  # Sat uncovered
+        assert result[6] == 0  # Sun uncovered
+        # Weekdays still covered
+        assert result[0] >= 5
+
+
+# ---------------------------------------------------------------------------
+# apply_shift_patterns
+# ---------------------------------------------------------------------------
+
+class TestApplyShiftPatterns:
+    def _make_dates(self, start="2026-03-02", n=14):
+        """Helper: generate n consecutive dates starting on a Monday."""
+        return pd.date_range(start, periods=n, freq="D").values
+
+    def test_all_week_single_rotation_weekly_constant(self):
+        """Single all-week rotation → each calendar week gets constant HC."""
+        patterns = [{"name": "all", "days": [0, 1, 2, 3, 4, 5, 6]}]
+        # 2026-03-02 is a Monday
+        dates = self._make_dates("2026-03-02", 14)
+        raw_hc = np.array([3, 5, 4, 2, 6, 1, 3,  8, 4, 2, 7, 5, 3, 6])
+        new_hc, new_cap = apply_shift_patterns(raw_hc, dates, patterns, 100.0, 8.0)
+        # Week 1 peak=6, Week 2 peak=8
+        assert len(set(new_hc[:7])) == 1
+        assert new_hc[0] == 6
+        assert len(set(new_hc[7:])) == 1
+        assert new_hc[7] == 8
+
+    def test_weekday_only_gives_zero_on_weekends(self):
+        """Mon-Fri rotation produces HC = 0 on Saturday and Sunday."""
+        patterns = [{"name": "weekday", "days": [0, 1, 2, 3, 4]}]
+        dates = self._make_dates("2026-03-02", 7)  # Mon-Sun
+        raw_hc = np.array([5, 5, 5, 5, 5, 5, 5])
+        new_hc, _ = apply_shift_patterns(raw_hc, dates, patterns, 100.0, 8.0)
+        # Weekdays (Mon-Fri) should have HC
+        assert all(new_hc[i] > 0 for i in range(5))
+        # Weekend should be 0
+        assert new_hc[5] == 0  # Sat
+        assert new_hc[6] == 0  # Sun
+
+    def test_two_rotations_overlap(self):
+        """Early/Central pattern creates a daily curve, not a flat line."""
+        patterns = [
+            {"name": "early", "days": [0, 1, 2, 3]},    # Mon-Thu
+            {"name": "central", "days": [2, 3, 4, 5]},   # Wed-Sat
+        ]
+        dates = self._make_dates("2026-03-02", 7)  # Mon-Sun
+        # Uniform need
+        raw_hc = np.array([10, 10, 10, 10, 10, 10, 0])
+        new_hc, _ = apply_shift_patterns(raw_hc, dates, patterns, 100.0, 8.0)
+        # Mon/Tue: only early → 10
+        # Wed/Thu: early + central overlap → ≥10
+        # Fri/Sat: only central → 10
+        # Sun: uncovered → 0
+        assert new_hc[0] >= 10   # Mon
+        assert new_hc[2] >= 10   # Wed (overlap)
+        assert new_hc[4] >= 10   # Fri
+        assert new_hc[6] == 0    # Sun
+
+    def test_capacity_equals_hc_times_productivity(self):
+        """Returned capacity matches HC × productivity × hours."""
+        patterns = [{"name": "all", "days": [0, 1, 2, 3, 4, 5, 6]}]
+        dates = self._make_dates("2026-03-02", 7)
+        raw_hc = np.array([5, 5, 5, 5, 5, 5, 5])
+        new_hc, new_cap = apply_shift_patterns(raw_hc, dates, patterns, 100.0, 8.0)
+        expected_cap = new_hc.astype(float) * 100.0 * 8.0
+        np.testing.assert_array_equal(new_cap, expected_cap)
+
+    def test_partial_week_at_end(self):
+        """A partial calendar week at the end is handled correctly."""
+        patterns = [{"name": "all", "days": [0, 1, 2, 3, 4, 5, 6]}]
+        # 10 days = full week + 3 extra days (Mon-Wed)
+        dates = self._make_dates("2026-03-02", 10)
+        raw_hc = np.array([3, 5, 4, 2, 6, 1, 3,  9, 4, 2])
+        new_hc, _ = apply_shift_patterns(raw_hc, dates, patterns, 100.0, 8.0)
+        # Week 1: max=6
+        assert new_hc[0] == 6
+        # Week 2 (partial): max=9
+        assert new_hc[7] == 9
+        assert new_hc[9] == 9
+
+
+# ---------------------------------------------------------------------------
+# calculate_actual_daily_hc
+# ---------------------------------------------------------------------------
+
+class TestCalculateActualDailyHc:
+    def _make_dates(self, start="2026-03-02", n=7):
+        return pd.date_range(start, periods=n, freq="D").values
+
+    def test_scalar_staffing_constant(self):
+        """Scalar staffing → same HC every day."""
+        dates = self._make_dates(n=7)
+        patterns = [{"name": "all", "days": [0, 1, 2, 3, 4, 5, 6]}]
+        result = calculate_actual_daily_hc(dates, 50, patterns)
+        np.testing.assert_array_equal(result, [50] * 7)
+
+    def test_per_rotation_staffing(self):
+        """Per-rotation list → daily HC follows shift coverage."""
+        dates = self._make_dates("2026-03-02", 7)  # Mon-Sun
+        patterns = [
+            {"name": "early", "days": [0, 1, 2, 3]},    # Mon-Thu
+            {"name": "central", "days": [2, 3, 4, 5]},   # Wed-Sat
+        ]
+        result = calculate_actual_daily_hc(dates, [70, 50], patterns)
+        # Mon=70, Tue=70, Wed=120, Thu=120, Fri=50, Sat=50, Sun=0
+        assert result[0] == 70   # Mon (early only)
+        assert result[1] == 70   # Tue (early only)
+        assert result[2] == 120  # Wed (early + central)
+        assert result[3] == 120  # Thu (early + central)
+        assert result[4] == 50   # Fri (central only)
+        assert result[5] == 50   # Sat (central only)
+        assert result[6] == 0    # Sun (uncovered)
+
+    def test_zero_list_staffing(self):
+        """All-zero rotation staffing → zero everywhere."""
+        dates = self._make_dates(n=7)
+        patterns = [
+            {"name": "early", "days": [0, 1, 2, 3]},
+            {"name": "central", "days": [2, 3, 4, 5]},
+        ]
+        result = calculate_actual_daily_hc(dates, [0, 0], patterns)
+        np.testing.assert_array_equal(result, [0] * 7)
+
+
+# ---------------------------------------------------------------------------
 # calculate_recommended_capacity
 # ---------------------------------------------------------------------------
 
@@ -267,6 +453,14 @@ class TestCalculateFlowBacklog:
         assert sample_config.current_staffing_outbound == 0
         df = calculate_flow_backlog(sample_config, sample_forecast_df, "outbound")
         assert (df["capacity_actual"] == 0).all()
+
+    def test_weekday_pattern_zeros_weekends(self, sample_config, sample_forecast_df):
+        """Mon-Fri shift pattern produces zero recommended capacity on weekends."""
+        sample_config.shift_patterns = [{"name": "weekday", "days": [0, 1, 2, 3, 4]}]
+        df = calculate_flow_backlog(sample_config, sample_forecast_df, "outbound")
+        weekend_mask = pd.to_datetime(df["date"]).dt.weekday >= 5
+        if weekend_mask.any():
+            assert (df.loc[weekend_mask, "capacity_recommended"] == 0).all()
 
 
 # ---------------------------------------------------------------------------

@@ -155,7 +155,7 @@ def _write_backlog_projection(
         bdf = backlog_dfs[flow]
         alert_series = alert_series_dict.get(flow, pd.Series(["Healthy"] * len(bdf)))
         flow_label = t_fn(f"labels.{flow}", locale)
-        current_staffing = getattr(config, f"current_staffing_{flow}", 0)
+        has_staffing = config.has_actual_staffing(flow)
 
         lines.append(f"### {flow_label}")
         lines.append("")
@@ -175,7 +175,7 @@ def _write_backlog_projection(
         cols[dob_rec_label] = bdf["days_of_backlog_recommended"].round(2)
 
         # Actual capacity columns (only when staffing > 0)
-        if current_staffing > 0:
+        if has_staffing:
             cap_act_label = t_fn("headers.capacity_actual", locale)
             end_act_label = t_fn("headers.end_backlog_actual", locale)
             dob_act_label = t_fn("headers.days_of_backlog_actual", locale)
@@ -201,7 +201,7 @@ def _write_backlog_projection(
         )
 
         chart_name = f"backlog_{flow}.png"
-        end_actual = bdf["end_backlog_actual"].values if current_staffing > 0 else None
+        end_actual = bdf["end_backlog_actual"].values if has_staffing else None
         save_backlog_chart(
             bdf["date"].values,
             bdf["end_backlog_recommended"].values,
@@ -230,13 +230,13 @@ def _write_headcount_plan(config, headcount_df, figures_dir, t_fn, locale) -> st
     for flow in config.active_flows:
         rec_col = f"hc_{flow}_recommended"
         act_col = f"hc_{flow}_actual"
-        current_staffing = getattr(config, f"current_staffing_{flow}", 0)
+        has_staffing = config.has_actual_staffing(flow)
 
         rec_label = t_fn(f"headers.hc_{flow}", locale) + " " + t_fn("headers.hc_recommended", locale)
         cols[rec_label] = headcount_df[rec_col]
         hc_chart_data[rec_label] = headcount_df[rec_col].values
 
-        if current_staffing > 0:
+        if has_staffing:
             act_label = t_fn(f"headers.hc_{flow}", locale) + " " + t_fn("headers.hc_actual", locale)
             cols[act_label] = headcount_df[act_col]
             hc_chart_data[act_label] = headcount_df[act_col].values
@@ -245,7 +245,9 @@ def _write_headcount_plan(config, headcount_df, figures_dir, t_fn, locale) -> st
     cols[total_rec_label] = headcount_df["hc_total_recommended"]
     hc_chart_data[total_rec_label] = headcount_df["hc_total_recommended"].values
 
-    total_actual_staffing = config.current_staffing_outbound + config.current_staffing_inbound
+    total_actual_staffing = (
+        config.has_actual_staffing("outbound") or config.has_actual_staffing("inbound")
+    )
     if total_actual_staffing > 0:
         total_act_label = t_fn("headers.hc_total", locale) + " " + t_fn("headers.hc_actual", locale)
         cols[total_act_label] = headcount_df["hc_total_actual"]
@@ -283,13 +285,13 @@ def _write_headcount_plan(config, headcount_df, figures_dir, t_fn, locale) -> st
     # One chart per flow + one total chart
     for flow in config.active_flows:
         flow_label = t_fn(f"labels.{flow}", locale)
-        current_staffing = getattr(config, f"current_staffing_{flow}", 0)
+        has_staffing = config.has_actual_staffing(flow)
         flow_chart_data = {}
 
         rec_label = t_fn(f"headers.hc_{flow}", locale) + " " + t_fn("headers.hc_recommended", locale)
         flow_chart_data[rec_label] = headcount_df[f"hc_{flow}_recommended"].values
 
-        if current_staffing > 0:
+        if has_staffing:
             act_label = t_fn(f"headers.hc_{flow}", locale) + " " + t_fn("headers.hc_actual", locale)
             flow_chart_data[act_label] = headcount_df[f"hc_{flow}_actual"].values
 
@@ -308,7 +310,9 @@ def _write_headcount_plan(config, headcount_df, figures_dir, t_fn, locale) -> st
     total_rec_label_chart = t_fn("headers.hc_total", locale) + " " + t_fn("headers.hc_recommended", locale)
     total_chart_data[total_rec_label_chart] = headcount_df["hc_total_recommended"].values
 
-    total_actual_staffing_chart = config.current_staffing_outbound + config.current_staffing_inbound
+    total_actual_staffing_chart = (
+        config.has_actual_staffing("outbound") or config.has_actual_staffing("inbound")
+    )
     if total_actual_staffing_chart > 0:
         total_act_label_chart = t_fn("headers.hc_total", locale) + " " + t_fn("headers.hc_actual", locale)
         total_chart_data[total_act_label_chart] = headcount_df["hc_total_actual"].values
@@ -455,7 +459,9 @@ def generate_markdown_report(
 
     # Compute cost summary if applicable
     cost_summary = None
-    total_actual_staffing = config.current_staffing_outbound + config.current_staffing_inbound
+    total_actual_staffing = (
+        config.has_actual_staffing("outbound") or config.has_actual_staffing("inbound")
+    )
     if config.cost_per_hour > 0 and total_actual_staffing > 0 and not headcount_df.empty:
         total_cost_rec = float(headcount_df["daily_cost_recommended"].sum())
         total_cost_act = float(headcount_df["daily_cost_actual"].sum())
